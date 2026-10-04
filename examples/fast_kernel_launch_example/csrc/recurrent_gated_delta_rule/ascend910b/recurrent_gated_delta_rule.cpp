@@ -265,17 +265,13 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
         numAcceptedTokensPtr = (GM_ADDR)num_accepted_tokens.value().data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-        ret = aclrtMemsetAsync(workspacePtr, workspaceSize, 0, workspaceSize, stream);
-        TORCH_CHECK(ret == ACL_SUCCESS, "memset workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    // Use the framework allocator so workspace lifetime follows the capture pool.
+    auto workspace = at::zeros({static_cast<int64_t>(workspaceSize)}, query.options().dtype(at::kByte));
+    GM_ADDR workspaceGm = workspaceSize > 0 ? (GM_ADDR)workspace.data_ptr() : nullptr;
 
     auto stateDtype = state.scalar_type();
     auto aclCall = [=]() -> int {
+        (void)workspace;  // Keep the allocation alive until the queued launch runs.
         if (stateDtype == at::kBFloat16) {
             LaunchRecurrentGatedDeltaRule<bfloat16_t>(blockDim, stream, queryPtr, keyPtr, valuePtr, betaPtr, statePtr,
                                                       cuSeqlensPtr, ssmStateIndicesPtr, gPtr, gkPtr,
@@ -292,11 +288,6 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
 
     at_npu::native::OpCommand::RunOpApi(functional ? "RecurrentGatedDeltaRuleFunctional" : "RecurrentGatedDeltaRule",
                                         aclCall);
-    c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 }
 
 at::Tensor recurrent_gated_delta_rule_npu(const at::Tensor &query, const at::Tensor &key, const at::Tensor &value,

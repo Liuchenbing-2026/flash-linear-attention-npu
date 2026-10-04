@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "dspark-gdn-length-diagnostic"
+version = "0.0.1"
+[project.entry-points."vllm.general_plugins"]
+dspark_gdn_length_diagnostic = "diag_gdn:register"
+[tool.setuptools]
+py-modules = ["diag_gdn"]
